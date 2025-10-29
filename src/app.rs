@@ -2,65 +2,24 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use leptos::prelude::*;
-use leptos::{logging::log, *};
-use leptos_use::{use_document, use_window};
-use wasm_bindgen::prelude::*;
+use leptos::*;
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
-use web_sys::{
-    HtmlCanvasElement, WebGl2RenderingContext as GL, WebGlBuffer, WebGlProgram, WebGlShader,
-};
+use web_sys::{HtmlCanvasElement, WebGl2RenderingContext as GL, WebGlProgram, WebGlShader};
 
-async fn fetch_shader_content_by_id(id: &str) -> Option<String> {
-    // using web_sys here; gloo_net is also fine (see alt below)
-    let el = use_document().query_selector(id).ok().flatten()?;
-    let script = el.dyn_into::<web_sys::HtmlScriptElement>().ok()?;
-    let src = script.src();
-
-    let resp =
-        wasm_bindgen_futures::JsFuture::from(use_window().as_ref().unwrap().fetch_with_str(&src))
-            .await
-            .ok()?;
-    let resp: web_sys::Response = resp.dyn_into().ok()?;
-    let text_promise = resp.text().ok()?;
-    let text_js = wasm_bindgen_futures::JsFuture::from(text_promise)
-        .await
-        .ok()?;
-    text_js.as_string()
-}
+const FIELD_VERTEX_SHADER: &str = include_str!("../static/shaders/quad.vert.glsl");
+const FIELD_FRAGMENT_SHADER: &str = include_str!("../static/shaders/viridis.frag.glsl");
+// const LINE_VERTEX_SHADER: &str = include_str!("../static/shaders/line.vert.glsl");
+// const LINE_FRAGMENT_SHADER: &str = include_str!("../static/shaders/line.frag.glsl");
 
 #[component]
 pub fn App() -> impl IntoView {
-    let shaders = LocalResource::new(|| async move {
-        let fvs = fetch_shader_content_by_id("#field-vertex-shader").await;
-        let ffs = fetch_shader_content_by_id("#field-fragment-shader").await;
-        let lvs = fetch_shader_content_by_id("#line-vertex-shader").await;
-        let lfs = fetch_shader_content_by_id("#line-fragment-shader").await;
-        if let (Some(mvc), Some(mfc), Some(rvc), Some(rfc)) = (fvs, ffs, lvs, lfs) {
-            return Some(((mvc, mfc), (rvc, rfc)));
-        }
-        None
-    });
     view! {
-        <Transition fallback=move || view!{ <p>Loading</p> }>
-            {move || {
-                match shaders.get() {
-                    Some(Some(shader_code)) => {
-                        view! {
-                            <FieldCanvas field_shaders=shader_code.0 line_shaders=shader_code.1 />
-                        }.into_any()
-                    }
-                    Some(None) => view!{ <p>Could not load required shader code</p> }.into_any(),
-                    None => view!{ <p>Loading</p> }.into_any(),                }
-            }}
-        </Transition>
+        <FieldCanvas/>
     }
 }
 
-// TODO: Replace all this fetching crap with inlining the shaders like so:
-// const MAIN_VS: &str = include_str!("../static/shaders/quad.vert.glsl");
-
 #[component]
-fn FieldCanvas(field_shaders: (String, String), line_shaders: (String, String)) -> impl IntoView {
+fn FieldCanvas() -> impl IntoView {
     view! {
         <main class="min-h-screen flex">
             <aside class="w-96 p-4 border-r border-zinc-800 bg-zinc-950 text-zinc-100">
@@ -68,7 +27,7 @@ fn FieldCanvas(field_shaders: (String, String), line_shaders: (String, String)) 
                 <p class="text-sm opacity-70">Leptos + WebGL2 + Tailwind</p>
             </aside>
             <section class="flex-1 relative bg-black">
-                <CanvasGL class="w-full h-screen block" field_shaders=field_shaders line_shaders=line_shaders/>
+                <CanvasGL class="w-full h-screen block"/>
             </section>
         </main>
     }
@@ -77,11 +36,7 @@ fn FieldCanvas(field_shaders: (String, String), line_shaders: (String, String)) 
 type RafClosure = Rc<RefCell<Option<Closure<dyn FnMut(f64)>>>>;
 
 #[component]
-fn CanvasGL(
-    class: &'static str,
-    field_shaders: (String, String),
-    line_shaders: (String, String),
-) -> impl IntoView {
+fn CanvasGL(class: &'static str) -> impl IntoView {
     let canvas_ref: NodeRef<html::Canvas> = NodeRef::new();
 
     canvas_ref.on_load(move |_| {
@@ -115,8 +70,8 @@ fn CanvasGL(
         };
 
         // --- program (full-screen quad)
-        // let prog = create_program(&gl, MAIN_VS, &field_shaders.1).expect("program");
-        let prog = create_program(&gl, &field_shaders.0, &field_shaders.1).expect("program");
+        let prog =
+            create_program(&gl, FIELD_VERTEX_SHADER, FIELD_FRAGMENT_SHADER).expect("program");
         gl.use_program(Some(&prog));
 
         // attribute: a_pos
