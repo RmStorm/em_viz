@@ -1,0 +1,40 @@
+[package]
+name = "em_vis"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+console_error_panic_hook = "0.1.7"
+js-sys = "0.3.82"
+leptos = { version = "0.8.12", features = ["csr"] }
+leptos-use = { version = "0.16.3", features = ["use_window"] }
+wasm-bindgen = "0.2.105"
+wasm-bindgen-futures = "0.4.55"
+
+[dependencies.web-sys]
+version = "0.3.82"
+features = [
+  "Document",
+  "Element",
+  "HtmlCanvasElement",
+  "Performance",
+  "WebGl2RenderingContext",
+  "WebGlBuffer",
+  "WebGlFramebuffer",
+  "WebGlProgram",
+  "WebGlShader",
+  "WebGlTexture",
+  "WebGlUniformLocation",
+  "WebGlVertexArrayObject",
+  "Window",
+  "console",
+]
+# wasm-bindgen = "0.2"
+# wasm-bindgen-futures = "0.4"
+# web-sys = { version = "0.3", features = [
+#   "Window","Document","HtmlCanvasElement","Element"
+# ] }
+
+# [profile.release]
+# lto = true
+# opt-level = "z"

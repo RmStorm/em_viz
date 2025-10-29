@@ -1,165 +1,17 @@
-<!doctype html>
-<html lang="en" >
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link data-trunk rel="rust" data-wasm-opt="z" />
+    <link data-trunk rel="icon" type="image/ico" href="/public/favicon.ico" />
+    <link data-trunk rel="tailwind-css" href="input.css" />
 
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>EM Viz</title>
-  <style>
-    html,
-    body {
-      margin: 0;
-      height: 100%;
-    }
+    <script data-trunk id="line-vertex-shader" type="x-shader/x-vertex" src="static/shaders/line.vert.glsl"></script>
+    <script data-trunk id="line-fragment-shader" type="x-shader/x-vertex" src="static/shaders/line.frag.glsl"></script>
+    <script data-trunk id="field-vertex-shader" type="x-shader/x-fragment" src="static/shaders/quad.vert.glsl"></script>
+    <script data-trunk id="field-fragment-shader" type="x-shader/x-fragment" src="static/shaders/viridis.frag.glsl"></script>
+    <title>EM_viz</title>
+  </head>
 
-    #gl {
-      display: block;
-      width: 100vw;
-      height: 100vh;
-    }
-
-    .sidebar {
-      position: fixed;
-      top: 0;
-      left: 0;
-      bottom: 0;
-      width: 420px;
-      background: #111;
-      color: #eee;
-      border-right: 1px solid #222;
-      padding: 12px 14px;
-      font-family: system-ui, sans-serif;
-      overflow: auto;
-    }
-
-    .content {
-      position: fixed;
-      top: 0;
-      left: 420px;
-      right: 0;
-      bottom: 0;
-    }
-
-    .panel {
-      background: #181818;
-      border: 1px solid #262626;
-      border-radius: 8px;
-      padding: 10px;
-      margin-bottom: 12px;
-    }
-
-    .panel h3 {
-      margin: 0 0 8px 0;
-      font-size: 14px;
-      letter-spacing: .02em;
-      color: #a9d;
-    }
-
-    details {
-      background: #151515;
-      border: 1px solid #262626;
-      border-radius: 8px;
-      padding: 8px 10px;
-    }
-
-    details>summary {
-      cursor: pointer;
-      font-weight: 600;
-      margin: -8px -10px 8px -10px;
-      padding: 8px 10px;
-      list-style: none;
-    }
-
-    table.eqs {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 14px;
-    }
-
-    table.eqs td {
-      border-top: 1px solid #242424;
-      padding: 6px 0;
-      vertical-align: top;
-    }
-
-    label.toggle {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 14px;
-    }
-
-    input[type="checkbox"] {
-      width: 16px;
-      height: 16px;
-    }
-  </style>
-</head>
-
-<body>
-  <aside class="sidebar">
-    <div class="panel">
-      <h3>Equations</h3>
-      <details open>
-        <summary>Electric field (point charges)</summary>
-        <table class="eqs">
-          <tr>
-            <td style="width:40%">Coulomb field</td>
-            <td>
-              \(\displaystyle \mathbf{E}(\mathbf{r}) = \frac{1}{4\pi\varepsilon_0}
-              \sum_i q_i \frac{\mathbf{r}-\mathbf{r}_i}{\|\mathbf{r}-\mathbf{r}_i\|^3}\)
-            </td>
-          </tr>
-          <tr>
-            <td>Softened (numeric)</td>
-            <td>
-              \(\displaystyle \mathbf{E}_\epsilon(\mathbf{r}) = \frac{1}{4\pi\varepsilon_0}
-              \sum_i q_i \frac{\mathbf{r}-\mathbf{r}_i}{(\|\mathbf{r}-\mathbf{r}_i\|^2+\epsilon^2)^{3/2}}\)
-            </td>
-          </tr>
-          <tr>
-            <td>Magnitude</td>
-            <td>\(\displaystyle |\mathbf{E}| = \sqrt{E_x^2 + E_y^2}\)</td>
-          </tr>
-        </table>
-      </details>
-
-    </div>
-
-    <div class="panel">
-      <h3>Layers</h3>
-      <label class="toggle">
-        <input type="checkbox" x-model="$store.app.fieldLines.visible">
-        Show electric field lines
-      </label>
-      <div style="margin-top:8px;">
-        <label style="font-size:12px;opacity:.8;">Density</label>
-        <input type="range" min="6" max="36" step="1"
-               x-model.number="$store.app.fieldLines.seedsPerAxis"
-               style="width:100%;">
-      </div>
-      <label class="toggle" style="margin-top:8px;">
-        <input type="checkbox" x-model="$store.app.tooltip.visible">
-        Show tooltip (cell data)
-      </label>
-    </div>
-  </aside>
-
-  <div class="content">
-    <canvas id="gl"></canvas>
-    <script type="module" src="/src/main.ts"></script>
-  </div>
-
-  <!-- floating tooltip -->
-  <div x-show="$store.app.tooltip.visible" x-transition x-cloak x-bind:style="`position:fixed; left:${$store.app.tooltip.x}px; top:${$store.app.tooltip.y}px; pointer-events:none;
-                   background:#111; color:#eee; border:1px solid #333; border-radius:8px;
-                   padding:8px 10px; font: 12px/1.3 system-ui; z-index: 1000;`">
-    <div style="opacity:.7; margin-bottom:4px;">Cell</div>
-    <div><b>ix, iy</b>: <span x-text="$store.app.tooltip.ix"></span>, <span x-text="$store.app.tooltip.iy"></span></div>
-    <div><b>u, v</b>: <span x-text="$store.app.tooltip.u.toFixed(3)"></span>, <span
-        x-text="$store.app.tooltip.v.toFixed(3)"></span></div>
-    <div><b>magnitude</b>: <span x-text="$store.app.tooltip.mag.toFixed(4)"></span></div>
-  </div>
-</body>
-
+  <body></body>
 </html>
