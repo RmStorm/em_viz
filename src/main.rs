@@ -1,6 +1,9 @@
 mod app;
+mod gl;
+mod solver;
+mod stream;
 
-use app::*;
+use app::App;
 use leptos::{logging, mount};
 
 pub fn main() {
