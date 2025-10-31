@@ -1,34 +1,30 @@
 use crate::solver::Solver;
 
 pub struct Streamliner {
-    seeds: u32,
+    num_seeds: u32,
     dirty: bool,
 }
 impl Streamliner {
     pub fn new() -> Self {
         Self {
-            seeds: 16,
+            num_seeds: 16,
             dirty: true,
         }
     }
     pub fn set_seeds(&mut self, n: u32) {
-        self.seeds = n;
-        self.dirty = true;
+        if n != self.num_seeds {
+            self.num_seeds = n;
+            self.dirty = true;
+        }
     }
-    pub fn dirty(&mut self) -> bool {
-        let d = self.dirty;
-        self.dirty = false;
-        d
-    }
+    // pub fn dirty(&mut self) -> bool {
+    //     let d = self.dirty;
+    //     self.dirty = false;
+    //     d
+    // }
 
-    pub fn recompute(
-        &self,
-        s: &Solver,
-        seeds_per_axis: u32,
-        step_scale: f32,
-        max_pts: usize,
-    ) -> Vec<Vec<f32>> {
-        let seeds = make_seeds(seeds_per_axis);
+    pub fn recompute(&self, s: &Solver, step_scale: f32, max_pts: usize) -> Vec<Vec<f32>> {
+        let seeds = make_seeds(self.num_seeds);
         let mut out = Vec::with_capacity(seeds.len());
         for (u, v) in seeds {
             out.push(integrate_streamline(s, u, v, step_scale, max_pts));
@@ -64,10 +60,10 @@ fn sample_field(s: &Solver, u: f32, v: f32) -> (f32, f32) {
     let tx = x - x0 as f32;
     let ty = y - y0 as f32;
 
-    let i00 = ((y0 as usize * s.w + x0 as usize) * 2) as usize;
-    let i10 = ((y0 as usize * s.w + x1 as usize) * 2) as usize;
-    let i01 = ((y1 as usize * s.w + x0 as usize) * 2) as usize;
-    let i11 = ((y1 as usize * s.w + x1 as usize) * 2) as usize;
+    let i00 = (y0 as usize * s.w + x0 as usize) * 2;
+    let i10 = (y0 as usize * s.w + x1 as usize) * 2;
+    let i01 = (y1 as usize * s.w + x0 as usize) * 2;
+    let i11 = (y1 as usize * s.w + x1 as usize) * 2;
 
     let ex00 = s.field[i00];
     let ey00 = s.field[i00 + 1];
@@ -128,11 +124,11 @@ fn integrate_streamline(
             }
             // push clip-space
             pts.push(u * 2.0 - 1.0);
-            pts.push(1.0 - v * 2.0);
+            pts.push(v * 2.0 - 1.0);
             let (uu, vv, mag) = rk4_step(s, u, v, h, sign);
             u = uu;
             v = vv;
-            if mag < 1e-5 || mag > 1e3 {
+            if !(1e-5..=1e4).contains(&mag) {
                 break;
             }
         }
