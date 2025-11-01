@@ -1,7 +1,10 @@
 mod app;
 mod gl;
-mod solver;
-mod stream;
+
+mod seed;
+mod camera;
+mod em3d;
+mod stream3d;
 
 use app::App;
 use leptos::{logging, mount};
