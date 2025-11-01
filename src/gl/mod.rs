@@ -8,6 +8,7 @@ const QUAD_VS: &str = include_str!("../../static/shaders/quad.vert.glsl");
 const FIELD_FS: &str = include_str!("../../static/shaders/viridis.frag.glsl");
 const LINE_VS: &str = include_str!("../../static/shaders/line.vert.glsl");
 const LINE_FS: &str = include_str!("../../static/shaders/line.frag.glsl");
+const BZ_FS: &str = include_str!("../../static/shaders/bz.frag.glsl");
 
 // type Raf = std::rc::Rc<std::cell::RefCell<Option<Closure<dyn FnMut(f64)>>>>;
 
@@ -18,6 +19,11 @@ pub struct Renderer {
     field_prog: WebGlProgram,
     quad_vbo: web_sys::WebGlBuffer,
     field_tex: web_sys::WebGlTexture,
+    // B overlay
+    bz_prog: WebGlProgram,
+    bz_tex: web_sys::WebGlTexture,
+    u_b_scale: Option<web_sys::WebGlUniformLocation>,
+    u_b_alpha: Option<web_sys::WebGlUniformLocation>,
     // lines
     line_prog: WebGlProgram,
     line_vbo: web_sys::WebGlBuffer,
@@ -37,6 +43,7 @@ impl Renderer {
         // programs
         let field_prog = create_program(&gl, QUAD_VS, FIELD_FS)?;
         let line_prog = create_program(&gl, LINE_VS, LINE_FS)?;
+        let bz_prog = create_program(&gl, QUAD_VS, BZ_FS)?;
 
         // quad vbo
         let quad: [f32; 12] = [
@@ -59,11 +66,26 @@ impl Renderer {
         gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_S, GL::CLAMP_TO_EDGE as i32);
         gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_T, GL::CLAMP_TO_EDGE as i32);
 
-        // bind sampler uniform
+        // BZ texture
+        let bz_tex = gl.create_texture().unwrap();
+        gl.active_texture(GL::TEXTURE1); // use texture unit 1 for B
+        gl.bind_texture(GL::TEXTURE_2D, Some(&bz_tex));
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_MIN_FILTER, GL::NEAREST as i32);
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_MAG_FILTER, GL::NEAREST as i32);
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_S, GL::CLAMP_TO_EDGE as i32);
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_T, GL::CLAMP_TO_EDGE as i32);
+
+        // bind sampler uniforms
         gl.use_program(Some(&field_prog));
         if let Some(loc) = gl.get_uniform_location(&field_prog, "u_exTex") {
-            gl.uniform1i(Some(&loc), 0);
+            gl.uniform1i(Some(&loc), 0); // field in TEX0
         }
+        gl.use_program(Some(&bz_prog));
+        if let Some(loc) = gl.get_uniform_location(&bz_prog, "u_bTex") {
+            gl.uniform1i(Some(&loc), 1); // Bz in TEX1
+        }
+        let u_b_scale = gl.get_uniform_location(&bz_prog, "u_scale");
+        let u_b_alpha = gl.get_uniform_location(&bz_prog, "u_alpha");
 
         // line vbo (dynamic)
         let line_vbo = gl.create_buffer().unwrap();
@@ -74,6 +96,10 @@ impl Renderer {
             field_prog,
             quad_vbo,
             field_tex,
+            bz_prog,
+            bz_tex,
+            u_b_scale,
+            u_b_alpha,
             line_prog,
             line_vbo,
             line_counts: Vec::new(),
@@ -114,6 +140,26 @@ impl Renderer {
             .unwrap();
     }
 
+    pub fn update_b_texture(&self, w: i32, h: i32, bz: &[f32]) {
+        // R32F upload; format RED/FLOAT in WebGL2
+        let view = unsafe { js_sys::Float32Array::view(bz) };
+        self.gl.active_texture(GL::TEXTURE1);
+        self.gl.bind_texture(GL::TEXTURE_2D, Some(&self.bz_tex));
+        self.gl
+            .tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_array_buffer_view(
+                GL::TEXTURE_2D,
+                0,
+                GL::R32F as i32,
+                w,
+                h,
+                0,
+                GL::RED,
+                GL::FLOAT,
+                Some(&view),
+            )
+            .unwrap();
+    }
+
     pub fn update_lines(&mut self, polylines: &[Vec<f32>]) {
         // flatten to one buffer; store per-line counts
         let total_floats: usize = polylines.iter().map(|p| p.len()).sum();
@@ -145,6 +191,30 @@ impl Renderer {
         self.gl.clear_color(0.02, 0.02, 0.05, 1.0);
         self.gl.clear(GL::COLOR_BUFFER_BIT);
         self.gl.draw_arrays(GL::TRIANGLES, 0, 6);
+    }
+
+    pub fn draw_b_overlay(&self, scale: f32, alpha: f32) {
+        // Fullscreen quad again, with blending
+        self.gl.enable(GL::BLEND);
+        self.gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
+
+        self.gl.use_program(Some(&self.bz_prog));
+        // same quad VBO and attrib as field pass
+        self.gl.bind_buffer(GL::ARRAY_BUFFER, Some(&self.quad_vbo));
+        let a_pos = self.gl.get_attrib_location(&self.bz_prog, "a_pos") as u32;
+        self.gl.enable_vertex_attrib_array(a_pos);
+        self.gl
+            .vertex_attrib_pointer_with_i32(a_pos, 2, GL::FLOAT, false, 0, 0);
+
+        if let Some(loc) = &self.u_b_scale {
+            self.gl.uniform1f(Some(loc), scale);
+        }
+        if let Some(loc) = &self.u_b_alpha {
+            self.gl.uniform1f(Some(loc), alpha);
+        }
+
+        self.gl.draw_arrays(GL::TRIANGLES, 0, 6);
+        self.gl.disable(GL::BLEND);
     }
 
     pub fn draw_lines(&self) {
