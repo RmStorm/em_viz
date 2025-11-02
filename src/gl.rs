@@ -188,7 +188,7 @@ impl Renderer {
         gl.enable(GL::CULL_FACE);
     }
 
-    pub fn draw_ribbons_beautified(&self, view: &[f32; 16], proj: &[f32; 16]) {
+    pub fn draw_ribbons(&self, view: &[f32; 16], proj: &[f32; 16]) {
         // 1) Glow: thicker, additive, no depth write
         self.draw_ribbons_inner(
             view,

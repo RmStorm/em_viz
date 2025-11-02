@@ -44,7 +44,7 @@ pub fn integrate_streamline_ribbon_signed(
         for &side in &[-1.0f32, 1.0] {
             out.extend_from_slice(&[p.x, p.y, p.z, tan.x, tan.y, tan.z, side, t]);
         }
-        if !(1e-6..=1e3).contains(&mag) || p.length() > 10.0 {
+        if !(1e-6..=1e4).contains(&mag) || p.length() > 250.0 {
             break;
         }
     }

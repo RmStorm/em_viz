@@ -13,13 +13,13 @@ pub struct Camera {
 impl Camera {
     pub fn new(aspect: f32) -> Self {
         Self {
-            eye: Vec3::new(0.0, 2.0, 4.0),
+            eye: Vec3::new(0.0, 0.0, 0.0),
             target: Vec3::ZERO,
             up: Vec3::Y,
-            fov_y: 45f32.to_radians(),
+            fov_y: 50f32.to_radians(),
             aspect,
             near: 0.01,
-            far: 50.0,
+            far: 250.0,
         }
     }
     pub fn view(&self) -> Mat4 {
@@ -59,7 +59,7 @@ impl OrbitController {
         Self {
             orbit: Orbit {
                 yaw: 0.0,
-                pitch: 0.35,
+                pitch: 0.0,
                 radius: 4.5,
                 target: Vec3::ZERO,
             },

@@ -1,9 +1,10 @@
 use crate::gl::Renderer;
+use crate::picking;
+use crate::state::{VizDebug, VizState};
 use crate::{camera, em3d::Charge3D};
 use glam::Vec3;
 use leptos::{logging::*, prelude::*};
 
-// tunables
 #[component]
 pub fn App() -> impl IntoView {
     view! { <FieldCanvas/> }
@@ -11,7 +12,17 @@ pub fn App() -> impl IntoView {
 
 #[component]
 fn FieldCanvas() -> impl IntoView {
-    let seeds_per_charge = RwSignal::new(50usize);
+    let charges3d = vec![
+        Charge3D {
+            pos: Vec3::new(0.0, 0.0, 0.4),
+            q: 1.0,
+        },
+        Charge3D {
+            pos: Vec3::new(0.0, 0.0, -0.4),
+            q: -1.0,
+        },
+    ];
+    let state = VizState::new(charges3d, /*seeds_default*/ 30);
 
     view! {
         <main class="min-h-screen flex">
@@ -21,22 +32,22 @@ fn FieldCanvas() -> impl IntoView {
 
                 <div class="space-y-2">
                   <h3 class="font-semibold">Layers</h3>
-
                   <div class="mt-2">
                     <label class="text-sm block mb-1">
-                      Streamline density (seeds / charge): <span class="font-mono">{move || seeds_per_charge.get()}</span>
+                      Streamline density (seeds / charge): <span class="font-mono">{move || state.seeds_per_charge.get()}</span>
                     </label>
                     <input
                       type="range" min="10" max="200" step="1"
-                      prop:value=move || seeds_per_charge.get()
+                      prop:value=move || state.seeds_per_charge.get()
                       on:input=move |ev| {
                         if let Ok(v) = event_target_value(&ev).parse::<usize>() {
-                            seeds_per_charge.set(v);
+                            state.seeds_per_charge.set(v);
                         }
                       }
                       style="width:100%;"
                     />
                   </div>
+                <VizDebug state=state/>
                 </div>
 
             </aside>
@@ -44,38 +55,50 @@ fn FieldCanvas() -> impl IntoView {
             <section class="flex-1 relative bg-black">
                 <CanvasGL
                   class="w-full h-screen block"
-                  seeds_per_charge=seeds_per_charge
+                  state=state
                 />
             </section>
         </main>
     }
 }
+
 #[component]
-fn CanvasGL(class: &'static str, seeds_per_charge: RwSignal<usize>) -> impl IntoView {
+fn CanvasGL(class: &'static str, state: VizState) -> impl IntoView {
     let canvas_ref: NodeRef<leptos::html::Canvas> = NodeRef::new();
 
-    let charges3d = vec![
-        Charge3D {
-            pos: Vec3::new(-0.4, 0.0, 0.0),
-            q: 1.0,
-        },
-        Charge3D {
-            pos: Vec3::new(0.4, 0.0, 0.0),
-            q: -1.0,
-        },
-    ];
-
-    // ribbons buffer as reactive state
-    let ribbons_sig = RwSignal::new(Vec::<Vec<f32>>::new());
-
     canvas_ref.on_load(move |_| {
-        let canvas = canvas_ref.get().expect("canvas");
+        log!("Canvas is loaded!");
         let ren = std::rc::Rc::new(std::cell::RefCell::new(
-            Renderer::new(canvas.clone()).expect("gl"),
+            Renderer::new(canvas_ref.get().expect("canvas")).expect("gl"),
         ));
+        picking::attach(canvas_ref, state);
+
+        // recompute ribbons when seed slider changes
+        Effect::new(move |_| {
+            let _ = state.rebuild.get(); // trigger
+            let cs = state.charges.get();
+            let n = state.seeds_per_charge.get();
+            let soft2 = 0.0025;
+            let k = 1.0;
+            let h = 0.015;
+            let max_pts = 1600;
+            let shell_r = 0.06;
+
+            let mut ribs = Vec::<Vec<f32>>::new();
+            for c in &cs {
+                let sign = if c.q >= 0.0 { 1.0 } else { -1.0 };
+                for s in crate::seed::fibonacci_sphere(c.pos, shell_r, n) {
+                    ribs.push(crate::stream3d::integrate_streamline_ribbon_signed(
+                        s, &cs, k, soft2, h, max_pts, sign,
+                    ));
+                }
+            }
+            state.ribbons.set(ribs);
+        });
 
         // camera
         let (mut cam, orbit_ctl) = {
+            let canvas = canvas_ref.get().expect("canvas");
             let mut cam = camera::Camera::new(
                 (canvas.client_width() as f32) / (canvas.client_height() as f32),
             );
@@ -84,35 +107,8 @@ fn CanvasGL(class: &'static str, seeds_per_charge: RwSignal<usize>) -> impl Into
             (cam, ctl)
         };
 
-        // recompute ribbons when seed slider changes
-        {
-            use crate::seed::fibonacci_sphere;
-            use crate::stream3d::integrate_streamline_ribbon_signed;
-
-            let charges3d = charges3d.clone();
-            Effect::new(move |_| {
-                let n = seeds_per_charge.get(); // react
-                log!("Changing to {:?} seeds_per_charge", seeds_per_charge);
-                let soft2 = 0.0025;
-                let k = 1.0;
-                let stepsize = 0.015;
-                let max_pts = 600;
-                let shell_r = 0.06;
-
-                let mut ribs = Vec::<Vec<f32>>::new();
-                for c in &charges3d {
-                    let sign = if c.q >= 0.0 { 1.0 } else { -1.0 };
-                    for s in fibonacci_sphere(c.pos, shell_r, n) {
-                        ribs.push(integrate_streamline_ribbon_signed(
-                            s, &charges3d, k, soft2, stepsize, max_pts, sign,
-                        ));
-                    }
-                }
-                ribbons_sig.set(ribs);
-            });
-        }
-
         // RAF
+        let canvas = canvas_ref.get().expect("canvas");
         Renderer::start_raf_rc(ren.clone(), move |ren, _t| {
             // camera aspect + update
             let cw = canvas.client_width() as f32;
@@ -122,22 +118,31 @@ fn CanvasGL(class: &'static str, seeds_per_charge: RwSignal<usize>) -> impl Into
             }
             cam.update_from_orbit(&orbit_ctl.borrow().orbit());
 
-            // draw
+            // compute view, proj, eye
+            state.view.set(cam.view());
+            state.proj.set(cam.proj());
+            state
+                .eye
+                .set(/* compute eye from orbit or view inverse */ cam.eye);
+
             let mut r = ren.borrow_mut();
             r.clear_color_depth(0.02, 0.02, 0.05, 1.0);
 
-            // upload current ribbons (only when content changed it updates the VBO)
-            let ribs = ribbons_sig.get_untracked();
+            let ribs = state.ribbons.get_untracked();
             r.update_ribbons(&ribs);
 
-            let view = cam.view().to_cols_array();
-            let proj = cam.proj().to_cols_array();
-
-            let centers = [[-0.4f32, 0.0, 0.0], [0.4f32, 0.0, 0.0]];
+            let centers: Vec<[f32; 3]> = state
+                .charges
+                .get_untracked()
+                .iter()
+                .map(|c| [c.pos.x, c.pos.y, c.pos.z])
+                .collect();
             r.update_charge_points(&centers);
 
-            r.draw_ribbons_beautified(&view, &proj);
-            r.draw_charges(&view, &proj, 35.0);
+            let view = state.view.get_untracked().to_cols_array();
+            let proj = state.proj.get_untracked().to_cols_array();
+            r.draw_ribbons(&view, &proj);
+            r.draw_charges(&view, &proj, 14.0);
         });
     });
 

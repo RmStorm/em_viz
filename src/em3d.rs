@@ -1,4 +1,3 @@
-// src/em3d.rs
 use glam::Vec3;
 
 #[derive(Clone, Copy)]

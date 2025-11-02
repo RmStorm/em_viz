@@ -1,9 +1,11 @@
 mod app;
 mod gl;
 
-mod seed;
 mod camera;
 mod em3d;
+mod picking;
+mod seed;
+mod state;
 mod stream3d;
 
 use app::App;
