@@ -1,12 +1,11 @@
 mod app;
-mod gl;
-
 mod camera;
 mod em3d;
+mod perf;
 mod picking;
 mod seed;
 mod state;
-mod stream3d;
+mod wgpu_renderer;
 
 use app::App;
 use leptos::{logging, mount};

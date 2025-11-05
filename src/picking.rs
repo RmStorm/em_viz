@@ -1,6 +1,8 @@
-use crate::state::{Drag3D, VizState};
+use crate::perf::Scope;
+use crate::state::{AppState, Drag3D};
 use glam::Vec3;
 use leptos::prelude::*;
+use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::JsCast;
 use web_sys::PointerEvent;
 
@@ -11,13 +13,7 @@ pub fn screen_to_ndc(x: f32, y: f32, rect: &web_sys::DomRect) -> (f32, f32) {
     (nx * 2.0 - 1.0, 1.0 - ny * 2.0)
 }
 
-pub fn ray_from_ndc(
-    ndc: (f32, f32),
-    view: glam::Mat4,
-    proj: glam::Mat4,
-    eye: Vec3,
-) -> (Vec3, Vec3) {
-    let inv_vp = (proj * view).inverse();
+pub fn ray_from_ndc_with_inv(ndc: (f32, f32), inv_vp: glam::Mat4, eye: Vec3) -> (Vec3, Vec3) {
     let p_ndc = glam::Vec4::new(ndc.0, ndc.1, 0.0, 1.0);
     let q_ndc = glam::Vec4::new(ndc.0, ndc.1, 1.0, 1.0);
     let p = inv_vp * p_ndc;
@@ -51,7 +47,7 @@ pub fn ray_plane(ro: Vec3, rd: Vec3, p0: Vec3, n: Vec3) -> Option<f32> {
 }
 
 // --- public API
-pub fn attach(canvas_ref: NodeRef<leptos::html::Canvas>, state: VizState) {
+pub fn attach(canvas_ref: NodeRef<leptos::html::Canvas>, app: AppState) {
     // prevent context menu on RMB
     let on_ctx =
         wasm_bindgen::closure::Closure::<dyn FnMut(_)>::new(move |e: web_sys::MouseEvent| {
@@ -70,17 +66,17 @@ pub fn attach(canvas_ref: NodeRef<leptos::html::Canvas>, state: VizState) {
             return;
         }
 
-        let (view, proj) = state.viewproj();
-        let eye = state.eye.get_untracked();
+        let eye = app.eye_rt.get_untracked();
+        let inv_vp = app.inv_vp.get_untracked();
 
         let rect = canvas_ref
             .get_untracked()
             .expect("canvas")
             .get_bounding_client_rect();
         let ndc = screen_to_ndc(e.client_x() as f32, e.client_y() as f32, &rect);
-        let (ro, rd) = ray_from_ndc(ndc, view, proj, eye);
+        let (ro, rd) = ray_from_ndc_with_inv(ndc, inv_vp, eye);
 
-        let cs = state.charges.get_untracked();
+        let cs = app.charges.get_untracked();
         let pick_r = 0.3;
         let mut best: Option<(usize, f32)> = None;
         for (i, c) in cs.iter().enumerate() {
@@ -92,16 +88,12 @@ pub fn attach(canvas_ref: NodeRef<leptos::html::Canvas>, state: VizState) {
             }
         }
         if let Some((idx, t)) = best {
-            // plane through hit, normal = camera forward
-            let fwd = {
-                let inv_view = view.inverse();
-                -(inv_view * glam::Vec4::new(0.0, 0.0, 1.0, 0.0))
-                    .truncate()
-                    .normalize()
-            };
+            // draggable plane: through hit point, facing the camera
+            // use camera forward from inv(view); simplest good proxy is ray dir.
             let hit = ro + rd * t;
+            let fwd = rd;
 
-            state.drag.set(Drag3D {
+            app.drag.set(Drag3D {
                 active: true,
                 idx,
                 plane_p: hit,
@@ -123,30 +115,35 @@ pub fn attach(canvas_ref: NodeRef<leptos::html::Canvas>, state: VizState) {
         .unwrap();
     on_down.forget();
 
-    // pointermove (drag)
+    // let rebuild_debounce_move = rebuild_debounce.clone();
     let on_move = wasm_bindgen::closure::Closure::<dyn FnMut(_)>::new(move |e: PointerEvent| {
-        let d = state.drag.get_untracked();
+        let d = app.drag.get_untracked();
         if !d.active {
             return;
         }
 
-        let (view, proj) = state.viewproj();
-        let eye = state.eye.get_untracked();
+        let eye = app.eye_rt.get_untracked();
+        let inv_vp = app.inv_vp.get_untracked();
+
         let rect = canvas_ref
             .get_untracked()
             .expect("canvas")
             .get_bounding_client_rect();
         let ndc = screen_to_ndc(e.client_x() as f32, e.client_y() as f32, &rect);
-        let (ro, rd) = ray_from_ndc(ndc, view, proj, eye);
+        let (ro, rd) = ray_from_ndc_with_inv(ndc, inv_vp, eye);
 
         if let Some(t) = ray_plane(ro, rd, d.plane_p, d.plane_n) {
             let p = ro + rd * t + d.hit_offset;
-            state.charges.update(|cs| {
+
+            // write directly; this triggers the upload_charges effect
+            app.charges.update(|cs| {
                 if let Some(ch) = cs.get_mut(d.idx) {
                     ch.pos = p;
                 }
             });
-            state.bump_rebuild();
+
+            // mark that we owe a rebuild when dragging stops
+            app.pending_rebuild.set(true);
         }
         e.prevent_default();
     });
@@ -158,7 +155,15 @@ pub fn attach(canvas_ref: NodeRef<leptos::html::Canvas>, state: VizState) {
 
     // pointerup/cancel
     let on_up = wasm_bindgen::closure::Closure::<dyn FnMut(_)>::new(move |_e: PointerEvent| {
-        state.drag.update(|d| d.active = false);
+        app.drag.update(|d| d.active = false);
+
+        // Mark that we owe a rebuild; if we're idle, kick it now; if not, the
+        // compute effect will see `pending_rebuild` and run one more when done.
+        app.pending_rebuild.set(true);
+        if !app.computing.get_untracked() {
+            app.pending_rebuild.set(false);
+            app.bump_rebuild();
+        }
     });
     let w = web_sys::window().unwrap();
     w.add_event_listener_with_callback("pointerup", on_up.as_ref().unchecked_ref())
