@@ -1,4 +1,5 @@
 use crate::em3d::Charge3D;
+use crate::perf_gpu::GpuTimerRing;
 use leptos::{logging::*, prelude::*};
 use web_sys::HtmlCanvasElement;
 use wgpu::{self, util::DeviceExt};
@@ -290,17 +291,7 @@ impl Charges {
         rpass.draw(0..6, 0..self.instances_len);
     }
 }
-use std::cell::Cell;
-use std::rc::Rc;
 
-#[derive(Debug)]
-struct PendingGpuTimer {
-    buf: wgpu::Buffer, // MAP_READ buffer with 2 * u64
-    ready: Rc<Cell<bool>>,
-    period_ns: f64, // queue.get_timestamp_period()
-    streams: u32,   // for logging context
-}
-#[derive(Debug)]
 pub struct ERibbonsCompute {
     pipeline: wgpu::ComputePipeline,
     bind_layout: wgpu::BindGroupLayout,
@@ -308,17 +299,11 @@ pub struct ERibbonsCompute {
     ubo: wgpu::Buffer, // k, soft2, h, max_pts, far_cut
     buf_charges: wgpu::Buffer,
     buf_seeds: wgpu::Buffer,
-    buf_counts: wgpu::Buffer, // STORAGE + INDIRECT
-
-    // --- NEW: timestamp query resources (assumed available)
-    ts_qset: wgpu::QuerySet, // 2 timestamps: [begin, end]
-    ts_buf: wgpu::Buffer,    // QUERY_RESOLVE target (2 * u64)
-    ts_read: wgpu::Buffer,   // MAP_READ staging (2 * u64)
-    pending_timer: Option<PendingGpuTimer>,
+    pub buf_counts: wgpu::Buffer,
 }
 
 impl ERibbonsCompute {
-    pub fn new(device: &wgpu::Device, ribbon_vbuf_e: &wgpu::Buffer) -> Self {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, ribbon_vbuf_e: &wgpu::Buffer) -> Self {
         let comp_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ribbon_e_comp"),
             source: wgpu::ShaderSource::Wgsl(RIBBON_COMP.into()),
@@ -460,28 +445,6 @@ impl ERibbonsCompute {
             ],
         });
 
-        // Timestamp query set: 2 slots (begin,end)
-        let ts_qset = device.create_query_set(&wgpu::QuerySetDescriptor {
-            label: Some("Ecomp ts"),
-            ty: wgpu::QueryType::Timestamp,
-            count: 2,
-        });
-
-        // Resolve target (COPY_SRC so we can copy to the mappable buffer)
-        let ts_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Ecomp ts-resolve"),
-            size: 16, // 2 * u64
-            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        // Readback buffer
-        let ts_read = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Ecomp ts-read"),
-            size: 16,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
         Self {
             pipeline,
             bind_layout,
@@ -490,10 +453,6 @@ impl ERibbonsCompute {
             buf_charges,
             buf_seeds,
             buf_counts,
-            ts_qset,
-            ts_buf,
-            ts_read,
-            pending_timer: None,
         }
     }
 
@@ -529,80 +488,6 @@ impl ERibbonsCompute {
                 0.0,
             ]),
         );
-    }
-
-    pub fn enqueue_dispatch_with_timestamp(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        streams: u32,
-    ) -> () {
-        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Ecomp enc"),
-        });
-        {
-            let mut c = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Ecomp"),
-                timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
-                    query_set: &self.ts_qset,
-                    beginning_of_pass_write_index: Some(0),
-                    end_of_pass_write_index: Some(1),
-                }),
-            });
-            c.set_pipeline(&self.pipeline);
-            c.set_bind_group(0, &self.bind_group, &[]);
-            let groups = streams.div_ceil(64);
-            c.dispatch_workgroups(groups, 1, 1);
-        }
-
-        // Resolve the 2 timestamps and copy to a mappable buffer
-        enc.resolve_query_set(&self.ts_qset, 0..2, &self.ts_buf, 0);
-        enc.copy_buffer_to_buffer(&self.ts_buf, 0, &self.ts_read, 0, 16);
-        queue.submit(Some(enc.finish()));
-        if self.pending_timer.is_none() {
-            // start map_async and push one PendingGpuTimer
-            let ready = Rc::new(Cell::new(false));
-            let ready_cb = Rc::clone(&ready);
-            let read_buf = self.ts_read.clone();
-            read_buf
-                .slice(..)
-                .map_async(wgpu::MapMode::Read, move |_res| {
-                    // single-threaded WASM -> Cell is fine; just mark ready
-                    ready_cb.set(true);
-                });
-
-            // remember it for RAF polling
-            self.pending_timer = Some(PendingGpuTimer {
-                buf: read_buf,
-                ready,
-                period_ns: queue.get_timestamp_period() as f64,
-                streams,
-            });
-        }
-    }
-    pub fn drain_gpu_timer_if_ready(&mut self) {
-        let Some(p) = &self.pending_timer else {
-            return;
-        };
-        if !p.ready.get() {
-            return; // not mapped yet, try next frame
-        }
-
-        // Now the buffer is mapped — safe to read
-        let slice = p.buf.slice(..);
-        let data = slice.get_mapped_range(); // 16 bytes
-        let t0 = u64::from_le_bytes(data[0..8].try_into().unwrap());
-        let t1 = u64::from_le_bytes(data[8..16].try_into().unwrap());
-        drop(data);
-
-        // IMPORTANT: unmap the BUFFER (not the slice)
-        p.buf.unmap();
-
-        let gpu_ms = (t1.saturating_sub(t0) as f64) * p.period_ns / 1_000_000.0;
-        leptos::logging::log!("[gpu] Ecomp {:.3} ms ({} streams)", gpu_ms, p.streams);
-
-        // consume it
-        self.pending_timer = None;
     }
 }
 
@@ -739,7 +624,6 @@ impl ERibbonsDraw {
     }
 }
 
-#[derive(Debug)]
 pub struct WgpuRenderer {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -754,6 +638,8 @@ pub struct WgpuRenderer {
     charges: Charges,
     ecomp: ERibbonsCompute,
     edraw: ERibbonsDraw,
+
+    timer: GpuTimerRing,
 }
 
 impl WgpuRenderer {
@@ -816,8 +702,10 @@ impl WgpuRenderer {
 
         // sub-systems
         let charges = Charges::new(&device, format);
-        let ecomp = ERibbonsCompute::new(&device, &ribbon_vbuf_e);
+        let ecomp = ERibbonsCompute::new(&device, &queue, &ribbon_vbuf_e);
         let edraw = ERibbonsDraw::new(&device, format, ribbon_vbuf_e.clone());
+
+        let timer = GpuTimerRing::new(&device, &queue, "Ecomp");
 
         let mut this = Self {
             surface,
@@ -832,6 +720,7 @@ impl WgpuRenderer {
             charges,
             ecomp,
             edraw,
+            timer,
         };
 
         // initial charges upload (once)
@@ -869,13 +758,28 @@ impl WgpuRenderer {
         self.ecomp
             .write_params(&self.queue, k, soft2, h, max_pts, far_cut);
         self.ecomp.upload_inputs(&self.queue, charges, seeds);
-        self.ecomp
-            .enqueue_dispatch_with_timestamp(&self.device, &self.queue, seeds.len() as u32);
+        // self.queue.submit([]);
+        let mut enc = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Ribbon compute encoder"),
+            });
+        let (ts_writes, finalize) = self.timer.span_compute("Ribbon compute encoder");
+        {
+            let mut c = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Ribbon compute pass descriptor"),
+                timestamp_writes: Some(ts_writes),
+            });
+            c.set_pipeline(&self.ecomp.pipeline);
+            c.set_bind_group(0, &self.ecomp.bind_group, &[]);
+            let groups = (seeds.len() as u32).div_ceil(64);
+            c.dispatch_workgroups(groups, 1, 1);
+        } // compute pass dropped to drop the encoders borrow!
+        finalize(&self.queue, enc);
         self.edraw.set_streams(seeds.len() as u32);
     }
 
     pub fn render(&mut self) -> anyhow::Result<()> {
-        self.ecomp.drain_gpu_timer_if_ready();
         let frame = match self.surface.get_current_texture() {
             Ok(f) => f,
             Err(_) => {
@@ -889,7 +793,7 @@ impl WgpuRenderer {
         let mut enc = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("enc") });
-
+        let (ts_writes, finalize) = self.timer.span_render("render");
         {
             let mut rpass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("rpass"),
@@ -908,7 +812,7 @@ impl WgpuRenderer {
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: Some(ts_writes),
                 occlusion_query_set: None,
             });
 
@@ -925,8 +829,7 @@ impl WgpuRenderer {
             // spheres
             self.charges.draw(&mut rpass);
         }
-
-        self.queue.submit(Some(enc.finish()));
+        finalize(&self.queue, enc);
         frame.present();
         Ok(())
     }

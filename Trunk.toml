@@ -1,3 +1,6 @@
 [tools]
 tailwindcss = "4.1.13"
 
+[serve]
+# *IMPORTANT*: these headers unlock high-res timers
+headers = {     "Cross-Origin-Opener-Policy" = "same-origin",    "Cross-Origin-Embedder-Policy" = "require-corp"}

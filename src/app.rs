@@ -98,6 +98,22 @@ fn FieldCanvas() -> impl IntoView {
                 }/>
             </section>
 
+            <section class="space-y-2">
+              <h3 class="font-semibold text-sm uppercase tracking-wide opacity-70">
+                Playback
+              </h3>
+              <button
+                class="text-sm px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700 transition-colors"
+                on:click=move |_| {
+                  app.paused.update(|p| *p = !*p);
+                }
+              >
+                {move || if app.paused.get() { "Play" } else { "Pause" }}
+              </button>
+              <p class="text-xs opacity-60">
+                {move || if app.paused.get() { "Paused" } else { "Running" }}
+              </p>
+            </section>
           </div>
         </aside>
 
@@ -203,24 +219,25 @@ pub async fn create_renderer_and_kick_off_raf_loop(
             .map(|c| [c.pos.x, c.pos.y, c.pos.z, c.q])
             .collect();
 
-        let timer_message = &format!("seeds.build n={}", charges.len() * n_seeds);
-        let _seed_timer = Scope::new(timer_message);
-        let shell_r = 0.06f32;
         let mut seeds: Vec<[f32; 4]> = Vec::with_capacity(charges.len() * n_seeds);
-        for c in &charges {
-            let sign = if c.q >= 0.0 { 1.0 } else { -1.0 };
-            for s0 in crate::seed::fibonacci_sphere(c.pos, shell_r, n_seeds) {
-                seeds.push([s0.x, s0.y, s0.z, sign]);
+        {
+            let timer_message = &format!("seeds.build n={}", charges.len() * n_seeds);
+            let _seed_timer = Scope::new(timer_message);
+            let shell_r = 0.06f32;
+            for c in &charges {
+                let sign = if c.q >= 0.0 { 1.0 } else { -1.0 };
+                for s0 in crate::seed::fibonacci_sphere(c.pos, shell_r, n_seeds) {
+                    seeds.push([s0.x, s0.y, s0.z, sign]);
+                }
             }
         }
-        drop(_seed_timer);
-
-        // params (slightly cheaper while dragging)
-        let (h_step, max_pts) = if dragging {
-            (0.02f32, 100u32)
-        } else {
-            (0.015f32, 1600u32)
-        };
+        // params (wildly cheaper while dragging)
+        // let (h_step, max_pts) = if dragging {
+        //     (0.02f32, 100u32)
+        // } else {
+        //     (0.015f32, 1600u32)
+        // };
+        let (h_step, max_pts) = (0.015f32, 200u32);
 
         // submit compute immediately; keep rendering
         let _render_timer = Scope::new("rendered kickoff");
@@ -255,6 +272,19 @@ pub async fn create_renderer_and_kick_off_raf_loop(
     }
 
     *raf2.borrow_mut() = Some(Closure::wrap(Box::new(move |t_ms: f64| {
+        let win = web_sys::window().unwrap();
+        // Always schedule the next frame first, so the loop keeps “idling” when paused
+        win.request_animation_frame(raf.borrow().as_ref().unwrap().as_ref().unchecked_ref())
+            .unwrap();
+
+        // If paused: show HUD "paused", reset timing state, and skip all heavy work
+        if app.paused.get_untracked() {
+            LAST_T_MS.with(|last| last.set(0.0));
+            EMA_DT_MS.with(|ema| ema.set(16.0)); // reset to sane default
+            hud.set_inner_html("paused");
+            return;
+        }
+
         // --- FPS/frametime update
         LAST_T_MS.with(|last| {
             let prev = last.get();
@@ -275,7 +305,6 @@ pub async fn create_renderer_and_kick_off_raf_loop(
             last.set(t_ms);
         });
 
-        let win = web_sys::window().unwrap();
         let dpr = win.device_pixel_ratio();
         let cw = (canvas_for_loop.client_width() as f64 * dpr).round() as u32;
         let ch = (canvas_for_loop.client_height() as f64 * dpr).round() as u32;
@@ -320,8 +349,6 @@ pub async fn create_renderer_and_kick_off_raf_loop(
                 let _ = r.render();
             }
         });
-        win.request_animation_frame(raf.borrow().as_ref().unwrap().as_ref().unchecked_ref())
-            .unwrap();
     }) as Box<dyn FnMut(f64)>));
 
     web_sys::window()

@@ -2,6 +2,7 @@ mod app;
 mod camera;
 mod em3d;
 mod perf;
+mod perf_gpu;
 mod picking;
 mod seed;
 mod state;

@@ -29,6 +29,9 @@ pub struct AppState {
     // task flags
     pub computing: RwSignal<bool>,
     pub pending_rebuild: RwSignal<bool>,
+
+    // pause / play RAF-driven simulation & rendering
+    pub paused: RwSignal<bool>,
 }
 
 impl AppState {
@@ -50,6 +53,8 @@ impl AppState {
 
             computing: RwSignal::new(false),
             pending_rebuild: RwSignal::new(false),
+
+            paused: RwSignal::new(false),
         }
     }
 
