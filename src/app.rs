@@ -1,9 +1,9 @@
-use crate::perf::Scope;
+use crate::perf::{self, Scope};
 use crate::state::AppState;
 use crate::wgpu_renderer::WgpuRenderer;
 use crate::{camera, picking};
 use glam::Vec3;
-use leptos::{logging::*, prelude::*};
+use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::HtmlInputElement;
@@ -28,7 +28,7 @@ fn FieldCanvas() -> impl IntoView {
         },
     ];
 
-    let app = AppState::new(charges3d, 30, 14.0);
+    let app = AppState::new(charges3d, 14.0);
 
     view! {
       <main class="h-screen flex overflow-hidden">
@@ -63,21 +63,18 @@ fn FieldCanvas() -> impl IntoView {
                 <span class="font-mono">{move || app.seeds_per_charge_e.get()}</span>
               </label>
               <input type="range" min="4" max="500" step="1" class="w-full"
-                prop:value=move || app.seeds_per_charge_e.get().to_string()
+                bind:value=app.seeds_per_charge_e
+                // prop:value=move || app.seeds_per_charge_e.get().to_string()
                 // slider handler
-                on:input=move |ev| {
-                    if let Some(target) = ev.target() {
-                        let input: HtmlInputElement = target.unchecked_into();
-                        if let Ok(v) = input.value().parse() {
-                            app.seeds_per_charge_e.set(v);
-                            app.pending_rebuild.set(true);
-                        }
-                    }
-                }/>
-              <button class="text-sm px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700 transition-colors"
-                on:click=move |_| app.bump_rebuild()>
-                "Rebuild now"
-              </button>
+                // on:input=move |ev| {
+                //     if let Some(target) = ev.target() {
+                //         let input: HtmlInputElement = target.unchecked_into();
+                //         if let Ok(v) = input.value().parse() {
+                //             app.seeds_per_charge_e.set(v);
+                //         }
+                //     }
+                // }
+                />
             </section>
 
             <section class="space-y-2">
@@ -133,8 +130,8 @@ fn CanvasWG(class: &'static str, app: AppState) -> impl IntoView {
         picking::attach(canvas_ref, app);
         let canvas = canvas_ref.get().expect("canvas");
 
-        // The WGPU start must be async.. but the raf loop is a little recursive task scheduling game anyways..
-        // So starting with this one unique task first is fine!
+        // The WGPU start must be async.. This one unique task does some prep
+        // and then kicks off the tail recursive RAF loop thingy..
         wasm_bindgen_futures::spawn_local(create_renderer_and_kick_off_raf_loop(canvas, app));
     });
 
@@ -182,12 +179,12 @@ pub async fn create_renderer_and_kick_off_raf_loop(
 
     Effect::new(move |_| {
         // read all inputs we care about — this makes the effect derive from them
-        let show_e = app.show_e.get();
-        let n_seeds = app.seeds_per_charge_e.get();
+        // let show_e = app.show_e.get();
+        // let n_seeds = app.seeds_per_charge_e.get();
         let px = app.point_size_px.get();
         let charges = app.charges.get(); // positions and q
         // optional: cheaper params while dragging
-        let dragging = app.drag.get().active;
+        // let dragging = app.drag.get().active;
 
         // always update point size (cheap)
         renderer_sig.update(|opt| {
@@ -204,48 +201,47 @@ pub async fn create_renderer_and_kick_off_raf_loop(
         });
 
         // if hidden or empty, clear ribbons and stop
-        if !show_e || n_seeds == 0 || charges.is_empty() {
-            renderer_sig.update(|opt| {
-                if let Some(r) = opt.as_mut() {
-                    r.clear_ribbons();
-                }
-            });
-            return;
-        }
+        // if !show_e ||charges.is_empty() {
+        //     renderer_sig.update(|opt| {
+        //         if let Some(r) = opt.as_mut() {
+        //             r.clear_ribbons();
+        //         }
+        //     });
+        // }
 
-        // build charges4 + seeds inline (simple + explicit)
-        let charges4: Vec<[f32; 4]> = charges
-            .iter()
-            .map(|c| [c.pos.x, c.pos.y, c.pos.z, c.q])
-            .collect();
+        // // build charges4 + seeds inline (simple + explicit)
+        // let charges4: Vec<[f32; 4]> = charges
+        //     .iter()
+        //     .map(|c| [c.pos.x, c.pos.y, c.pos.z, c.q])
+        //     .collect();
 
-        let mut seeds: Vec<[f32; 4]> = Vec::with_capacity(charges.len() * n_seeds);
-        {
-            let timer_message = &format!("seeds.build n={}", charges.len() * n_seeds);
-            let _seed_timer = Scope::new(timer_message);
-            let shell_r = 0.06f32;
-            for c in &charges {
-                let sign = if c.q >= 0.0 { 1.0 } else { -1.0 };
-                for s0 in crate::seed::fibonacci_sphere(c.pos, shell_r, n_seeds) {
-                    seeds.push([s0.x, s0.y, s0.z, sign]);
-                }
-            }
-        }
-        // params (wildly cheaper while dragging)
-        // let (h_step, max_pts) = if dragging {
-        //     (0.02f32, 100u32)
-        // } else {
-        //     (0.015f32, 1600u32)
-        // };
-        let (h_step, max_pts) = (0.015f32, 200u32);
+        // let mut seeds: Vec<[f32; 4]> = Vec::with_capacity(charges.len() * n_seeds);
+        // {
+        //     let timer_message = &format!("seeds.build n={}", charges.len() * n_seeds);
+        //     let _seed_timer = Scope::new(timer_message);
+        //     let shell_r = 0.06f32;
+        //     for c in &charges {
+        //         let sign = if c.q >= 0.0 { 1.0 } else { -1.0 };
+        //         for s0 in crate::seed::fibonacci_sphere(c.pos, shell_r, n_seeds) {
+        //             seeds.push([s0.x, s0.y, s0.z, sign]);
+        //         }
+        //     }
+        // }
+        // // params (wildly cheaper while dragging)
+        // // let (h_step, max_pts) = if dragging {
+        // //     (0.02f32, 100u32)
+        // // } else {
+        // //     (0.015f32, 1600u32)
+        // // };
+        // let (h_step, max_pts) = (0.015f32, 200u32);
 
-        // submit compute immediately; keep rendering
-        let _render_timer = Scope::new("rendered kickoff");
-        renderer_sig.update(|opt| {
-            if let Some(r) = opt.as_mut() {
-                r.start_compute_ribbons_e(&charges4, &seeds, h_step, max_pts);
-            }
-        });
+        // // submit compute immediately; keep rendering
+        // let _render_timer = Scope::new("rendered kickoff");
+        // renderer_sig.update(|opt| {
+        //     if let Some(r) = opt.as_mut() {
+        //         r.start_compute_ribbons_e(&charges4, &seeds, h_step, max_pts);
+        //     }
+        // });
     });
 
     // RAF: drive camera + render
@@ -261,14 +257,14 @@ pub async fn create_renderer_and_kick_off_raf_loop(
      border-radius:4px;z-index:9999;pointer-events:none",
     )
     .unwrap();
-    hud.set_inner_html("…");
+    hud.set_inner_html("...");
     doc.body().unwrap().append_child(&hud).ok();
 
     // State for fps (EWMA to keep it stable)
     use std::cell::Cell;
     thread_local! {
-        static LAST_T_MS: Cell<f64> = Cell::new(0.0);
-        static EMA_DT_MS: Cell<f64> = Cell::new(16.0); // start near 60 FPS
+        static LAST_T_MS: Cell<f64> = const { Cell::new(0.0) };
+        static EMA_DT_MS: Cell<f64> = const { Cell::new(16.0) }; // start near 60 FPS
     }
 
     *raf2.borrow_mut() = Some(Closure::wrap(Box::new(move |t_ms: f64| {
@@ -285,11 +281,11 @@ pub async fn create_renderer_and_kick_off_raf_loop(
             return;
         }
 
-        // --- FPS/frametime update
+        // --- FPS/frametime + timing HUD update
         LAST_T_MS.with(|last| {
             let prev = last.get();
             if prev != 0.0 {
-                let dt = t_ms - prev; // ms
+                let dt = t_ms - prev; // ms since last frame
                 EMA_DT_MS.with(|ema| {
                     // EWMA with ~0.1 smoothing
                     let smoothed = 0.9 * ema.get() + 0.1 * dt;
@@ -299,7 +295,27 @@ pub async fn create_renderer_and_kick_off_raf_loop(
                     } else {
                         0.0
                     };
-                    hud.set_inner_html(&format!("{:.1} fps | {:.2} ms", fps, smoothed));
+
+                    // Drain perf::Scope timings collected this frame
+                    let timings = perf::drain_frame_timings();
+                    let timings_str = if timings.is_empty() {
+                        "".to_string()
+                    } else {
+                        let mut s = String::from(" | ");
+                        for (i, entry) in timings.iter().enumerate() {
+                            if i > 0 {
+                                s.push_str(", ");
+                            }
+                            use std::fmt::Write as _;
+                            let _ = write!(s, "{}: {:.2}ms", entry.label, entry.ms);
+                        }
+                        s
+                    };
+
+                    hud.set_inner_html(&format!(
+                        "{:.1} fps | {:.2} ms{}",
+                        fps, smoothed, timings_str
+                    ));
                 });
             }
             last.set(t_ms);
@@ -322,30 +338,33 @@ pub async fn create_renderer_and_kick_off_raf_loop(
         app.inv_vp.set(inv_vp);
         app.eye_rt.set(cam.eye);
 
-        let now = js_sys::Date::now();
-        let dragging = app.drag.get_untracked().active;
-
-        thread_local! {
-            static LAST_REBUILD_MS: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
-        }
-        let last = LAST_REBUILD_MS.with(|c| c.get());
-
-        let hz = if dragging { 30.0 } else { 20.0 }; // feels nice
-        let period_ms = 1000.0 / hz;
-
-        if app.pending_rebuild.get_untracked()
-            && now - last >= period_ms
-            && !app.computing.get_untracked()
-        {
-            app.pending_rebuild.set(false);
-            app.bump_rebuild();
-            LAST_REBUILD_MS.with(|c| c.set(now));
-        }
-
         renderer_sig.update_untracked(|opt| {
+            let _pre_render = Scope::new("raf pre-render");
+            let charges = app.charges.get_untracked(); // positions and q
+            let n_seeds = app.seeds_per_charge_e.get_untracked();
+            let charges4: Vec<[f32; 4]> = charges
+                .iter()
+                .map(|c| [c.pos.x, c.pos.y, c.pos.z, c.q])
+                .collect();
+            let n_seeds_num: usize = n_seeds.parse().expect("Failed to parse integer");
+            let mut seeds: Vec<[f32; 4]> = Vec::with_capacity(charges.len() * n_seeds_num);
+            {
+                let timer_message = &format!("seeds.build n={}", charges.len() * n_seeds_num);
+                let _seed_timer = Scope::new(timer_message);
+                let shell_r = 0.06f32;
+                for c in &charges {
+                    let sign = if c.q >= 0.0 { 1.0 } else { -1.0 };
+                    for s0 in crate::seed::fibonacci_sphere(c.pos, shell_r, n_seeds_num) {
+                        seeds.push([s0.x, s0.y, s0.z, sign]);
+                    }
+                }
+            }
+            let (h_step, max_pts) = (0.015f32, 400u32);
+            drop(_pre_render);
             if let Some(r) = opt.as_mut() {
                 r.resize(cw, ch);
                 r.update_viewproj(view.to_cols_array(), proj.to_cols_array());
+                r.start_compute_ribbons_e(&charges4, &seeds, h_step, max_pts);
                 let _ = r.render();
             }
         });

@@ -1,6 +1,6 @@
 use crate::em3d::Charge3D;
 use crate::perf_gpu::GpuTimerRing;
-use leptos::{logging::*, prelude::*};
+use leptos::logging::log;
 use web_sys::HtmlCanvasElement;
 use wgpu::{self, util::DeviceExt};
 
@@ -16,13 +16,6 @@ const CHARGES_BYTES: u64 = (MAX_CHARGES as u64) * 16; // vec4 per charge
 // Each RK step emits two vertices; each vertex is 2 * vec4<f32> (packed like in WGSL)
 // => 2 verts * 2 vec4 * 16B = 64B per step
 const OUT_BYTES: u64 = (MAX_STREAMS as u64) * (MAX_PTS as u64) * 64;
-
-#[derive(Clone, Copy, Debug)]
-pub struct DispatchStats {
-    pub streams: u32,
-    pub gpu_ms: f64,
-    pub zero_ms: f64,
-}
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -813,6 +806,7 @@ impl WgpuRenderer {
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: Some(ts_writes),
+                // timestamp_writes: None,
                 occlusion_query_set: None,
             });
 
@@ -829,6 +823,7 @@ impl WgpuRenderer {
             // spheres
             self.charges.draw(&mut rpass);
         }
+        // self.queue.submit(Some(enc.finish()));
         finalize(&self.queue, enc);
         frame.present();
         Ok(())

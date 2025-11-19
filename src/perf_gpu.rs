@@ -1,3 +1,4 @@
+use crate::perf;
 use leptos::logging::log;
 use wgpu::{ComputePassTimestampWrites, MapMode, RenderPassTimestampWrites};
 
@@ -96,7 +97,9 @@ impl GpuTimerRing {
                         dt_ns / 1_000_000.0
                     };
                     read_buf.unmap();
-                    log!("[gpu] {}: {:.3} ms", label, dt_ms);
+                    perf::record_timing(label, dt_ms);
+                    // 🔇 No console logging here anymore.
+                    // log!("[gpu] {}: {:.3} ms", label, dt_ms);
                 });
         };
 

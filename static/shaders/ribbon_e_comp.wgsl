@@ -27,6 +27,7 @@ struct Counts { data: array<DrawIndirect> }   // indirect draw args per streamli
 fn charges_len() -> u32 {
   return arrayLength(&CH.data);
 }
+
 fn seeds_len() -> u32 {
   return arrayLength(&SD.data);
 }
@@ -80,6 +81,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   var written: u32 = 0u; // vertices written so far for this strip
 
   var step: u32 = 0u;
+  let sample_stride: u32 = 1u;
   loop {
     if (step >= max_pts) { break; }
 
@@ -133,17 +135,25 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     p    = p2;
 
     // write two vertices (4 vec4s)
-    let base_vec4 = (base_vertex + written) * 2u; // 2 vec4 per vertex
-    // LHS
-    OUT.data[base_vec4 + 0u] = vec4<f32>(p,  -1.0);
-    OUT.data[base_vec4 + 1u] = vec4<f32>(tan, tone);
-    // RHS
-    OUT.data[base_vec4 + 2u] = vec4<f32>(p,   1.0);
-    OUT.data[base_vec4 + 3u] = vec4<f32>(tan, tone);
+    // let base_vec4 = (base_vertex + written) * 2u; // 2 vec4 per vertex
+    // // LHS
+    // OUT.data[base_vec4 + 0u] = vec4<f32>(p,  -1.0);
+    // OUT.data[base_vec4 + 1u] = vec4<f32>(tan, tone);
+    // // RHS
+    // OUT.data[base_vec4 + 2u] = vec4<f32>(p,   1.0);
+    // OUT.data[base_vec4 + 3u] = vec4<f32>(tan, tone);
 
-    written = written + 2u;
+    // written = written + 2u;
+  if (step % sample_stride == 0u) {
+      let base_vec4 = (base_vertex + written) * 2u;
+      OUT.data[base_vec4 + 0u] = vec4<f32>(p,  -1.0);
+      OUT.data[base_vec4 + 1u] = vec4<f32>(tan, tone);
+      OUT.data[base_vec4 + 2u] = vec4<f32>(p,   1.0);
+      OUT.data[base_vec4 + 3u] = vec4<f32>(tan, tone);
+      written = written + 2u;
+  }
 
-    // early termination like CPU
+    // early termination
     if (!(m1 >= 1e-6 && m1 <= 1e4)) { break; }
     // if (length(p) > far_cut) { break; }
 

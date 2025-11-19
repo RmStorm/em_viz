@@ -1,7 +1,7 @@
 struct U {
   view: mat4x4<f32>,
   proj: mat4x4<f32>,
-  vp_hw_alpha: vec4<f32>,  // x=viewport.w, y=viewport.h, z=halfWidthPx, w=alpha
+  vp_hw_alpha: vec4<f32>,  // x = viewport.w, y = viewport.h, z = halfWidthPx, w = alpha
 };
 @group(0) @binding(0) var<uniform> UBO: U;
 
@@ -22,28 +22,51 @@ struct VOut {
 fn vs(v: VIn) -> VOut {
   var o: VOut;
 
-  let vpos  = UBO.view * vec4(v.center, 1.0);
-  let Tv    = normalize((UBO.view * vec4(v.tangent, 0.0)).xyz);
-  let Nv    = normalize(cross(Tv, vec3(0.0, 0.0, -1.0)));
+  // World -> view/clip for center
+  let pos_world = vec4<f32>(v.center, 1.0);
+  let vpos      = UBO.view * pos_world;
+  let clipc     = UBO.proj * vpos;
 
-  let clipc = UBO.proj * vpos;
+  // Take a tiny step along the tangent in world space
+  let eps      = 0.01;
+  let p2_world = vec4<f32>(v.center + eps * v.tangent, 1.0);
+  let vpos2    = UBO.view * p2_world;
+  let clip2    = UBO.proj * vpos2;
 
+  // Convert both to NDC
+  let ndc0 = clipc.xyz / clipc.w;
+  let ndc1 = clip2.xyz / clip2.w;
+
+  // Screen-space line direction (in NDC)
+  var dir_line = ndc1.xy - ndc0.xy;
+  if (length(dir_line) < 1e-6) {
+      dir_line = vec2<f32>(0.0, 1.0);
+  } else {
+      dir_line = normalize(dir_line);
+  }
+
+  // Perpendicular in screen space
+  let dir_screen = vec2<f32>(-dir_line.y, dir_line.x);
+
+  // Pixels -> NDC
   let ndc_per_px = vec2<f32>(2.0) / UBO.vp_hw_alpha.xy;
-  let dir_screen = normalize(Nv.xy + vec2<f32>(1e-8, 0.0));
-  let ndc_off    = v.side * UBO.vp_hw_alpha.z * ndc_per_px * dir_screen;
+  let ndc_off = v.side * UBO.vp_hw_alpha.z * ndc_per_px * dir_screen;
 
-  let clip = vec4<f32>(
-    clipc.x + ndc_off.x * clipc.w,
-    clipc.y + ndc_off.y * clipc.w,
-    clipc.z,
-    clipc.w
+  // Apply offset in NDC and go back to clip
+  let ndc = vec3<f32>(
+      ndc0.x + ndc_off.x,
+      ndc0.y + ndc_off.y,
+      ndc0.z       // leave depth alone
   );
+
+  let clip = vec4<f32>(ndc * clipc.w, clipc.w);
 
   o.pos  = clip;
   o.side = v.side;
   o.tone = clamp(v.tone, 0.0, 1.0);
   return o;
 }
+
 
 fn viridis(t: f32) -> vec3<f32> {
   let c0=vec3<f32>(0.267,0.005,0.329);

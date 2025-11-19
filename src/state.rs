@@ -21,45 +21,27 @@ pub struct AppState {
     pub inv_vp: RwSignal<Mat4>, // cached inverse(proj*view)
 
     // controls
-    pub rebuild: RwSignal<u64>,
-    pub seeds_per_charge_e: RwSignal<usize>,
+    pub seeds_per_charge_e: RwSignal<String>,
     pub show_e: RwSignal<bool>,
     pub point_size_px: RwSignal<f32>,
-
-    // task flags
-    pub computing: RwSignal<bool>,
-    pub pending_rebuild: RwSignal<bool>,
 
     // pause / play RAF-driven simulation & rendering
     pub paused: RwSignal<bool>,
 }
 
 impl AppState {
-    pub fn new(
-        initial_charges: Vec<Charge3D>,
-        seeds_default: usize,
-        point_size_default: f32,
-    ) -> Self {
+    pub fn new(initial_charges: Vec<Charge3D>, point_size_default: f32) -> Self {
         Self {
             charges: RwSignal::new(initial_charges),
             drag: RwSignal::new(Drag3D::default()),
             eye_rt: RwSignal::new(Vec3::ZERO),
             inv_vp: RwSignal::new(Mat4::IDENTITY),
 
-            rebuild: RwSignal::new(0),
-            seeds_per_charge_e: RwSignal::new(seeds_default),
+            seeds_per_charge_e: RwSignal::new("30".into()),
             show_e: RwSignal::new(true),
             point_size_px: RwSignal::new(point_size_default),
 
-            computing: RwSignal::new(false),
-            pending_rebuild: RwSignal::new(false),
-
             paused: RwSignal::new(false),
         }
-    }
-
-    #[inline]
-    pub fn bump_rebuild(&self) {
-        self.rebuild.update(|k| *k = k.wrapping_add(1));
     }
 }

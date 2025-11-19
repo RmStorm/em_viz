@@ -1,8 +1,8 @@
-use crate::perf::Scope;
+// use crate::perf::Scope;
 use crate::state::{AppState, Drag3D};
 use glam::Vec3;
 use leptos::prelude::*;
-use std::{cell::RefCell, rc::Rc};
+// use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::JsCast;
 use web_sys::PointerEvent;
 
@@ -143,7 +143,7 @@ pub fn attach(canvas_ref: NodeRef<leptos::html::Canvas>, app: AppState) {
             });
 
             // mark that we owe a rebuild when dragging stops
-            app.pending_rebuild.set(true);
+            // app.pending_rebuild.set(true);
         }
         e.prevent_default();
     });
@@ -159,11 +159,11 @@ pub fn attach(canvas_ref: NodeRef<leptos::html::Canvas>, app: AppState) {
 
         // Mark that we owe a rebuild; if we're idle, kick it now; if not, the
         // compute effect will see `pending_rebuild` and run one more when done.
-        app.pending_rebuild.set(true);
-        if !app.computing.get_untracked() {
-            app.pending_rebuild.set(false);
-            app.bump_rebuild();
-        }
+        // app.pending_rebuild.set(true);
+        // if !app.computing.get_untracked() {
+        //     app.pending_rebuild.set(false);
+        //     app.bump_rebuild();
+        // }
     });
     let w = web_sys::window().unwrap();
     w.add_event_listener_with_callback("pointerup", on_up.as_ref().unchecked_ref())
