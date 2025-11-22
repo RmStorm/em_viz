@@ -116,6 +116,9 @@ fn FieldCanvas() -> impl IntoView {
 
         <section class="flex-1 h-full relative bg-black overflow-hidden">
           <CanvasWG class="w-full h-full block" app=app />
+          <div class="w-[500px] absolute right-2 top-2 px-2 py-1 rounded bg-black/60 text-lime-400 text-[17px] font-mono pointer-events-none whitespace-pre leading-tight">
+            {move || app.hud_text.get()}
+          </div>
         </section>
       </main>
     }
@@ -248,18 +251,6 @@ pub async fn create_renderer_and_kick_off_raf_loop(
     let raf = std::rc::Rc::new(std::cell::RefCell::new(None::<Closure<dyn FnMut(f64)>>));
     let raf2 = raf.clone();
 
-    let doc = web_sys::window().unwrap().document().unwrap();
-    let hud = doc.create_element("div").unwrap();
-    hud.set_attribute(
-        "style",
-        "position:fixed;right:8px;top:8px;padding:4px 6px;\
-     background:rgba(0,0,0,0.6);color:#0f0;font:12px/1.2 monospace;\
-     border-radius:4px;z-index:9999;pointer-events:none",
-    )
-    .unwrap();
-    hud.set_inner_html("...");
-    doc.body().unwrap().append_child(&hud).ok();
-
     // State for fps (EWMA to keep it stable)
     use std::cell::Cell;
     thread_local! {
@@ -277,7 +268,7 @@ pub async fn create_renderer_and_kick_off_raf_loop(
         if app.paused.get_untracked() {
             LAST_T_MS.with(|last| last.set(0.0));
             EMA_DT_MS.with(|ema| ema.set(16.0)); // reset to sane default
-            hud.set_inner_html("paused");
+            app.hud_text.set("paused".into());
             return;
         }
 
@@ -296,24 +287,10 @@ pub async fn create_renderer_and_kick_off_raf_loop(
                         0.0
                     };
 
-                    // Drain perf::Scope timings collected this frame
-                    let timings = perf::drain_frame_timings();
-                    let timings_str = if timings.is_empty() {
-                        "".to_string()
-                    } else {
-                        let mut s = String::from(" | ");
-                        for (i, entry) in timings.iter().enumerate() {
-                            if i > 0 {
-                                s.push_str(", ");
-                            }
-                            use std::fmt::Write as _;
-                            let _ = write!(s, "{}: {:.2}ms", entry.label, entry.ms);
-                        }
-                        s
-                    };
-
-                    hud.set_inner_html(&format!(
-                        "{:.1} fps | {:.2} ms{}",
+                    // Drain perf::Scope + GPU timings collected this frame
+                    let timings_str = perf::drain_frame_timings();
+                    app.hud_text.set(format!(
+                        "{:.1} fps | {:.2} ms\n{}",
                         fps, smoothed, timings_str
                     ));
                 });

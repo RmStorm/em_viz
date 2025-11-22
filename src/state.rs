@@ -27,6 +27,7 @@ pub struct AppState {
 
     // pause / play RAF-driven simulation & rendering
     pub paused: RwSignal<bool>,
+    pub hud_text: RwSignal<String>,
 }
 
 impl AppState {
@@ -42,6 +43,7 @@ impl AppState {
             point_size_px: RwSignal::new(point_size_default),
 
             paused: RwSignal::new(false),
+            hud_text: RwSignal::new("".into()),
         }
     }
 }
